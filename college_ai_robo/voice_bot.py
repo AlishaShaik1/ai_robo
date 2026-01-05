@@ -4,6 +4,9 @@ import logging
 import time
 import platform
 import subprocess
+import os
+import uuid
+from gtts import gTTS
 
 # Import the response logic from your existing app
 try:
@@ -28,34 +31,34 @@ def clean_text_for_speech(text):
     return text
 
 # ==========================
-# ✅ UPDATED VOICE FUNCTION (ONLY CHANGE)
+# ✅ UPDATED VOICE FUNCTION (gTTS – PRODUCTION)
 # ==========================
 def speak(text):
-    """Convert text to speech (Female voice on Raspberry Pi & Windows)."""
+    """Convert text to speech using Google gTTS (stable voice)."""
     try:
         clean_text = clean_text_for_speech(text)
         print(f"Robot: {text}")
 
-        # Raspberry Pi / Linux → MBROLA female voice
-        if platform.system() == "Linux":
-            subprocess.run(
-                ["espeak-ng", "-v", "mb-us1", "-s", "165", clean_text],
-                check=False
-            )
+        # Generate unique temp file
+        filename = f"/tmp/chitti_tts_{uuid.uuid4()}.mp3"
 
-        # Windows / Laptop → pyttsx3 female (Zira)
+        # Google TTS
+        tts = gTTS(text=clean_text, lang="en", slow=False)
+        tts.save(filename)
+
+        # Play audio (Linux / Raspberry Pi)
+        if platform.system() == "Linux":
+            os.system(f"mpg123 {filename} > /dev/null 2>&1")
         else:
+            # Windows fallback
             engine = pyttsx3.init()
-            voices = engine.getProperty('voices')
-            for voice in voices:
-                if "female" in voice.name.lower() or "zira" in voice.name.lower():
-                    engine.setProperty('voice', voice.id)
-                    break
-            engine.setProperty('rate', 150)
-            engine.setProperty('volume', 1.0)
             engine.say(clean_text)
             engine.runAndWait()
             engine.stop()
+
+        # Cleanup
+        if os.path.exists(filename):
+            os.remove(filename)
 
     except Exception as e:
         print(f"TTS Error: {e}")
