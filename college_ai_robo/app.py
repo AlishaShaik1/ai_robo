@@ -1,789 +1,497 @@
 import pandas as pd
 import gradio as gr
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+import joblib
 import os
-
-# ==========================
-# MODEL (Google AI)
-# ==========================
-MODEL_ID = "google/flan-t5-base"
-
-print("Loading model...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_ID)
-
-qa_pipeline = pipeline(
-    "text2text-generation",
-    model=model,
-    tokenizer=tokenizer
-)
-
-# ==========================
-# LOAD PEOPLE DATA
-# ==========================
-# Fix: Use absolute path relative to this script
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-people_file = os.path.join(BASE_DIR, "people_data.txt")
-
-PEOPLE_DICT = {} # {role_lower: name, name_lower: role}
-people_context = ""
-
-if os.path.exists(people_file):
-    print(f"Loading people data from: {people_file}")
-    with open(people_file, "r", encoding="utf-8") as f:
-        # Use bullet points for clear separation
-        lines = f.readlines()
-        people_context = "\n".join([f"- {line.strip()}" for line in lines if line.strip()])
-        
-        # Build Fast Lookup Dict
-        for line in lines:
-             if ":" in line:
-                 parts = line.split(":", 1)
-                 role = parts[0].strip()
-                 name = parts[1].strip()
-                 PEOPLE_DICT[role.lower()] = name
-                 PEOPLE_DICT[name.lower()] = role
-                 
-                 if "dr." in name.lower():
-                     clean_name = name.lower().replace("dr.", "").strip()
-                     PEOPLE_DICT[clean_name] = role
-else:
-    people_context = "People data not found."
-    print(f"Warning: people_data.txt not found at {people_file}")
-
-# ==========================
-# LOAD ADMISSION DATA
-# ==========================
-# ==========================
-# LOAD ADMISSION DATA
-# ==========================
-import glob
 import re
+from vector_store import CollegeKnowledgeBase
+import train_intent
+import train_admission
 from data_loader import load_placement_data
 
-# Global Placement Data
-PLACEMENT_DF = None
-PLACEMENT_CONTEXT = "Placement data not available."
+# ==========================
+# SETUP & MODEL LOADING
+# ==========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+INTENT_MODEL_PATH = os.path.join(BASE_DIR, "intent_model.pkl")
+ADMISSION_MODEL_PATH = os.path.join(BASE_DIR, "admission_model.pkl")
 
-def generate_placement_summary(df):
-    if df is None or df.empty:
-        return "No placement data available."
-    
-    summary = "--- Placement Statistics 2023 ---\n"
-    
-    # Total Placed
-    total = len(df)
-    summary += f"Total Students Placed: {total}\n"
-    
-    # By Branch
-    if 'Branch' in df.columns:
-        counts = df['Branch'].value_counts()
-        for branch, count in counts.items():
-            summary += f"- {branch}: {count} students placed.\n"
-            
-            # Top Companies for this branch
-            branch_df = df[df['Branch'] == branch]
-            if 'Company' in branch_df.columns:
-                # Deduplicate and clean
-                companies_raw = branch_df['Company'].astype(str).tolist()
-                # Split by comma if multiple companies in one cell
-                all_companies = []
-                for c in companies_raw:
-                    for sub_c in c.split(','):
-                         clean_c = sub_c.strip()
-                         if clean_c and clean_c.lower() != 'nan':
-                             all_companies.append(clean_c)
-                
-                # Count freq
-                from collections import Counter
-                comp_counts = Counter(all_companies)
-                top_mnc = [c for c, _ in comp_counts.most_common(5)]
-                summary += f"  Top Recruiters for {branch}: {', '.join(top_mnc)}\n"
-            
-            # Package Stats (Only for IT as requested)
-            if branch == "IT" and 'Package_Val' in branch_df.columns:
-                valid_pkgs = branch_df[branch_df['Package_Val'] > 0]['Package_Val']
-                if not valid_pkgs.empty:
-                    max_pkg = valid_pkgs.max()
-                    min_pkg = valid_pkgs.min()
-                    avg_pkg = valid_pkgs.mean()
-                    summary += f"  Highest Package for {branch}: {max_pkg/100000:.2f} LPA\n"
-                    summary += f"  Average Package for {branch}: {avg_pkg/100000:.2f} LPA\n"
-                    summary += f"  Least Package for {branch}: {min_pkg/100000:.2f} LPA\n"
+print("--- AI ROBO STARTUP ---")
 
-    return summary
-
-def init_placement_data():
-    global PLACEMENT_DF, PLACEMENT_CONTEXT
+# 1. Intent Model
+if not os.path.exists(INTENT_MODEL_PATH):
+    print("Intent model not found. Training now...")
     try:
-        print("Loading Placement Data...")
-        PLACEMENT_DF = load_placement_data(BASE_DIR)
-        if not PLACEMENT_DF.empty:
-            print("Placement Data Loaded Successfully.")
-            PLACEMENT_CONTEXT = generate_placement_summary(PLACEMENT_DF)
-        else:
-            print("Placement DataFrame is empty.")
+        train_intent.train_intent_model()
     except Exception as e:
-        print(f"Failed to load placement data: {e}")
-        PLACEMENT_DF = pd.DataFrame()
+        print(f"Error training intent model: {e}")
 
-init_placement_data()
+try:
+    print("Loading Intent Model...")
+    intent_model = joblib.load(INTENT_MODEL_PATH)
+except Exception as e:
+    print(f"Failed to load intent model: {e}")
+    intent_model = None
 
+# 2. Admission Model
+if not os.path.exists(ADMISSION_MODEL_PATH):
+    print("Admission model not found. Training now...")
+    try:
+        train_admission.train_and_save()
+    except Exception as e:
+        print(f"Error training admission model: {e}")
 
-GLOBAL_BRANCH_COUNTS = {}
-TOTAL_INTAKE = 0
+try:
+    print("Loading Admission Model...")
+    # Loads the full pipeline (ColumnTransformer + LogReg)
+    admission_model = joblib.load(ADMISSION_MODEL_PATH)
+except Exception as e:
+    print(f"Failed to load admission model: {e}")
+    admission_model = None
 
-def load_admission_data():
-    global GLOBAL_BRANCH_COUNTS, TOTAL_INTAKE
-    # 1. Try Loading Excel (Clean Format)
-    excel_files = glob.glob(os.path.join(BASE_DIR, "*.xlsx"))
-    if excel_files:
-        try:
-            excel_path = excel_files[0]
-            print(f"Loading Excel file: {excel_path}")
-            df = pd.read_excel(excel_path)
-            if 'Branch' in df.columns and 'Intake' in df.columns:
-                df.columns = df.columns.str.strip()
-                admission_list = []
-                TOTAL_INTAKE = 0
-                for _, row in df.iterrows():
-                    branch = str(row['Branch']).upper()
-                    intake = row['Intake']
-                    admission_list.append(f"- Branch {branch} has an intake of {intake} students.")
-                    GLOBAL_BRANCH_COUNTS[branch] = intake # Populate global dict
-                    TOTAL_INTAKE += intake
-                return "\n".join(admission_list)
-        except Exception as e:
-            print(f"Error reading Excel: {e}")
+# 3. Knowledge Base (FAQ)
+print("Initializing Knowledge Base...")
+kb = CollegeKnowledgeBase()
 
-    # 2. Try Loading CSV (Unstructured Report Format)
-    csv_files = glob.glob(os.path.join(BASE_DIR, "*.csv"))
-    # Filter for Admission file (APEAPCET/Approval) and exclude placements
-    admission_files = [
-        f for f in csv_files 
-        if "placement" not in os.path.basename(f).lower() 
-        and ("apeapcet" in os.path.basename(f).lower() or "approval" in os.path.basename(f).lower())
-    ]
-    
-    if admission_files:
-        try:
-            csv_path = admission_files[0]
-            print(f"Loading CSV file: {csv_path}")
-            
-            branch_counts = {}
-            # Use utf-8-sig to handle potential BOM
-            with open(csv_path, "r", encoding="utf-8-sig", errors="ignore") as f:
-                for line in f:
-                    # Robust parsing: Split by whitespace and take the last token
-                    parts = line.split()
-                    if len(parts) > 5: # Valid lines usually have many columns
-                        last_token = parts[-1].strip().strip('"')
-                        # Check if it looks like a branch code (2-4 uppercase letters)
-                        if len(last_token) >= 2 and len(last_token) <= 4 and last_token.isalpha() and last_token.isupper():
-                             branch_counts[last_token] = branch_counts.get(last_token, 0) + 1
-            
-            if branch_counts:
-                # Add aliases for better user understanding
-                aliases = {
-                    "CAI": ["AIML", "CSE(AIML)", "CSE-AIML", "AI&ML"],
-                    "CSM": ["AIML", "CSE(AI&ML)", "CSE-AI&ML"], # Clarify if different
-                    "MEC": ["MECHANICAL", "MECH"],
-                    "ECE": ["ELECTRONICS"],
-                    "EEE": ["ELECTRICAL"],
-                    "CIV": ["CIVIL"],
-                    "CSE": ["COMPUTER SCIENCE", "CSE"],
-                    "INF": ["IT", "INFORMATION TECHNOLOGY"] # Added INF mapping for IT
-                }
-                
-                admission_list = []
-                TOTAL_INTAKE = 0
-                for branch, count in branch_counts.items():
-                    # Populate global dict for direct lookup
-                    GLOBAL_BRANCH_COUNTS[branch] = count
-                    TOTAL_INTAKE += count
-                    
-                    for alias in aliases.get(branch, []):
-                        GLOBAL_BRANCH_COUNTS[alias.upper()] = count
+# 4. Placement Data (Load Data Only)
+PLACEMENT_DF = load_placement_data(BASE_DIR)
 
-                    # Format: "- Branch CSE (also known as COMPUTER SCIENCE) has 180..."
-                    alias_str = ""
-                    if branch in aliases:
-                        alias_str = f" (also known as {', '.join(aliases[branch])})"
-                    admission_list.append(f"- Branch {branch}{alias_str} has {count} students admitted/approved.")
-                
-                return "\n".join(admission_list)
-            else:
-                 return "Admission data found but could not extract branch details."
-
-        except Exception as e:
-            print(f"Error reading CSV: {e}")
-            return "Error loading admission data from CSV."
-
-    return "No admission data file (Excel/CSV) found."
-
-admission_context = load_admission_data()
-
+# 5. People Data (Rule-based Lookup)
+people_file = os.path.join(BASE_DIR, "people_data.txt")
+PEOPLE_DICT = {} 
+if os.path.exists(people_file):
+    with open(people_file, "r", encoding="utf-8") as f:
+        for line in f:
+             if ":" in line:
+                 parts = line.split(":", 1)
+                 role = parts[0].strip().lower()
+                 name = parts[1].strip()
+                 # Store both ways for lookup
+                 PEOPLE_DICT[role] = name
+                 PEOPLE_DICT[name.lower()] = role
 
 # ==========================
-# COMBINED KNOWLEDGE (Grounding)
+# DATA LOADING & HELPER
 # ==========================
-SYSTEM_CONTEXT = f"""
-Instructions: You are a helpful college assistant. 
-1. Answer the question using ONLY the provided information below.
-2. Be brief and direct. Do NOT print the entire context or summary unless explicitly asked to "summarize".
-3. If the user asks about a specific branch (e.g., AIML), only provide information for that branch. Do NOT mention other branches.
-4. If the answer is not in the text, say "I currently do not have that information.".
-
---- People Information ---
-{people_context}
-
---- Admission Information ---
-{admission_context}
-
---- Placement Information ---
-{PLACEMENT_CONTEXT}
-"""
-
-# ==========================
-# TYPO TOLERANCE
-# ==========================
-import difflib
-
-def correct_typos(message):
-    # Extract likely roles from our people data to match against
-    # Assuming lines like "Role: Name"
-    valid_roles = []
-    if people_context and "People data not found" not in people_context:
-        for line in people_context.split('\n'):
-            parts = line.replace('- ', '').split(':')
-            if len(parts) > 1:
-                valid_roles.append(parts[0].strip().lower())
-    
-    # Common mappings (manual overrides)
-    custom_corrections = {
-        "princpaaal": "principal",
-        "chaman": "chairman",
-        "hd": "hod",
-        "deaan": "dean",
-        "princi": "principal",
-        "hod aiml": "hod aiml" # Ensure multi-word roles are preserved if typed correctly
+def get_intake_info(message):
+    intake_data = {
+        "CSE": 180,
+        "AIML": 180,
+        "ECE": 300,
+        "EEE": 120,
+        "MECH": 120,
+        "CIVIL": 60,
+        "IT": 60,
+        "DS": 60,
+        "AI": 60,
+        "CYBER": 60
     }
     
-    words = message.lower().split()
-    corrected_words = []
+    msg = message.lower()
     
-    for word in words:
-        # Check custom map
-        if word in custom_corrections:
-            corrected_words.append(custom_corrections[word])
-            continue
+    # 1. Check for specific branch using Regex Word Boundaries
+    # Prevents "details" matching "ai", "place" matching "ce" etc.
+    target_branch = None
+    # Added "cyber" to the list
+    for code in ["cse", "aiml", "ece", "eee", "mech", "civil", "it", "ds", "ai", "cyber"]:
+        # \b ensures we match " ai " or "ai" at end, but not "avail" or "details"
+        if re.search(r"\b" + re.escape(code) + r"\b", msg):
+            target_branch = code.upper()
+            break
             
-        # Fuzzy match against valid roles
-        matches = difflib.get_close_matches(word, valid_roles, n=1, cutoff=0.7)
-        if matches:
-            corrected_words.append(matches[0])
-        else:
-            corrected_words.append(word)
-            
-    return " ".join(corrected_words)
-
-# ==========================
-# STATISTICAL ADMISSION PREDICTOR (Lookup Model)
-# ==========================
-# Due to environment constraints with scikit-learn, we use a direct statistical model.
-# This actually provides 100% accurate historical cutoffs rather than approximations.
-
-# ==========================
-# STATISTICAL ADMISSION PREDICTOR (Lookup Model)
-# ==========================
-# Due to environment constraints with scikit-learn, we use a direct statistical model.
-# This actually provides accurate historical cutoffs rather than approximations.
-
-ADMISSION_CUTOFFS = {} # Key: (Branch, Gender, Category), Value: Cutoff Rank
-
-def load_prediction_model():
-    global ADMISSION_CUTOFFS
-    csv_files = glob.glob(os.path.join(BASE_DIR, "*.csv"))
-    # Filter for admission files (APEAPCET/Approval)
-    admission_files = [
-        f for f in csv_files 
-        if "placement" not in os.path.basename(f).lower() 
-        and ("apeapcet" in os.path.basename(f).lower() or "approval" in os.path.basename(f).lower())
-    ]
-
-    if not admission_files:
-        print("No Admission CSV files found for prediction!")
-        return
-
-    csv_path = admission_files[0]
-    print(f"Building Prediction Model from: {csv_path}")
+    if target_branch:
+        count = intake_data.get(target_branch, "Data Unavailable")
+        return f"The intake (seats) for **{target_branch}** is **{count}**."
     
-    # Store List of ranks for each group
-    # Key: (Branch, Gender, Category) -> Val: [rank1, rank2, ...]
-    grouped_ranks = {}
+    # 2. Return All
+    lines = ["**College Intake Details**:"]
+    for branch, count in intake_data.items():
+        lines.append(f"- {branch}: {count}")
+    return "\n".join(lines)
+
+def get_placement_info(message):
+    if PLACEMENT_DF is None or PLACEMENT_DF.empty:
+        return "Placement data unavailable."
     
-    # Use the robust parsing logic
-    with open(csv_path, "r", encoding="utf-8-sig", errors="ignore") as f:
-        for line in f:
-            parts = line.split()
-            clean_line = line.strip().strip('"')
-            tokens = clean_line.split()
-            
-            if len(tokens) < 8:
-                continue
-                
-            try:
-                # 1. Branch: Last token
-                branch = tokens[-1]
-                if not (len(branch) >= 2 and len(branch) <= 5 and branch.isalpha() and branch.isupper()):
-                    continue
-                
-                # 2. Rank
-                rank = -1
-                for i in range(2, 6): 
-                    if tokens[i].isdigit() and int(tokens[i]) > 1 and int(tokens[i]) < 200000:
-                         rank = int(tokens[i])
-                         break
-                if rank == -1: continue
-
-                # 3. Gender
-                gender = None
-                for token in tokens:
-                    if token in ['M', 'F']:
-                        gender = token
-                        break
-                if not gender: continue
-
-                # 4. Category
-                category = None
-                cats = ['OC', 'BC_A', 'BC_B', 'BC_C', 'BC_D', 'BC_E', 'SC', 'ST']
-                for token in tokens:
-                    for c in cats:
-                        if token.startswith(c):
-                            category = c
-                            break
-                    if category: break
-                if not category: category = 'OC'
-                
-                # 5. EXCLUDE SPECIAL CATEGORIES (CAP, NCC, PH)
-                # Note: We now allow EWS if it is part of the category (e.g. OC_EWS column if exists, or handled via category field).
-                # But typically EWS is a quota. Let's check how EWS appears. 
-                # If the user asks for "OC_EWS", we should verify if the CSV differentiates it. 
-                # The debugging showed high ranks for OC. These probably were EWS.
-                # If we filter EWS out of "OC", we refine OC. 
-                # But if we want to support "OC_EWS" specifically, we need to capture it.
-                
-                # Logic Update:
-                # If the line says "EWS", treat it as a special modifier.
-                # If the token 'OC_EWS' or 'EWS' exists in tokens, we capture it.
-                
-                is_ews = False
-                if "EWS" in clean_line.upper():
-                    is_ews = True
-                    
-                # If we parsed category as 'OC' but line has EWS, let's change category to 'OC_EWS'
-                if category == 'OC' and is_ews:
-                    category = 'OC_EWS'
-
-                # Exclude other special quotas
-                upper_line = clean_line.upper()
-                if "NCC" in upper_line or "CAP" in upper_line or "PH" in upper_line or "SP" in upper_line:
-                    continue
-                    
-                # If strict EWS filtering was desired for "OC":
-                # We essentially just made a new category 'OC_EWS'. 
-                # So 'OC' stats will now be pure OC (without EWS), and 'OC_EWS' will be its own.
-
-                # Store
-                key = (branch, gender, category)
-                if key not in grouped_ranks:
-                    grouped_ranks[key] = []
-                grouped_ranks[key].append(rank)
-
-            except Exception:
-                continue
+    msg = message.lower()
     
-    # Calculate Percentile Cutoff
-    # Instead of MAX, we use 90th percentile to filter out extreme outliers
-    for key, ranks in grouped_ranks.items():
-        if ranks:
-            # Sort ranks
-            ranks.sort()
-            # Take the 85th percentile (safer bet than Max)
-            idx = int(len(ranks) * 0.90) 
-            if idx >= len(ranks): idx = len(ranks) - 1
-            cutoff = ranks[idx]
-            ADMISSION_CUTOFFS[key] = cutoff
+    # 1. Detect Branch
+    target_branch = None
+    branch_map = {
+        "aiml": "AIML", "ai": "AIML", "artificial intelligence": "AIML",
+        "cse": "CSE", "computer": "CSE",
+        "ece": "ECE", "electronics": "ECE",
+        "eee": "EEE", "electrical": "EEE",
+        "mech": "MECH", "mechanical": "MECH",
+        "civil": "CIVIL", 
+        "it": "IT", "information technology": "IT",
+        "ds": "DS", "data science": "DS",
+        "cyber": "CSC" # Assuming Cyber placement code is CSC or CYBER, checking DF later if needed. For now mapping to key.
+    }
+    
+    for k, v in branch_map.items():
+        if re.search(r"\b" + re.escape(k) + r"\b", msg):
+            target_branch = v
+            break
             
-    # For OC CSE and BC_D CSE debugging
-    # print(f"DEBUG: OC-M-CSE Cutoff: {ADMISSION_CUTOFFS.get(('CSE', 'M', 'OC'))}")
+    # Filter Data
+    df = PLACEMENT_DF
+    if target_branch:
+        if 'Branch' in df.columns:
+            # Check if target_branch exists in DF, if not try aliases if needed?
+            # For Cyber, it might be listed as 'CYBER' or 'CSC'.
+            # Let's try flexible filtering if strict match fails?
+            df_filtered = df[df['Branch'] == target_branch]
+            if df_filtered.empty and target_branch == "CSC":
+                 # Try fallback
+                 df_filtered = df[df['Branch'] == "CYBER"]
+            if not df_filtered.empty:
+                df = df_filtered
+            
+    if df.empty:
+        return f"No placement records found for {target_branch if target_branch else 'this query'}."
 
-    print(f"Prediction Model Ready. Loaded stats for {len(ADMISSION_CUTOFFS)} groups.")
-
-# Initialize the model
-load_prediction_model()
-
-def predict_eligibility(message):
-    if not ADMISSION_CUTOFFS:
-        return "Prediction data is not available."
+    # 2. Stats
+    count = len(df)
+    high_pkg = 0.0
+    avg_pkg = 0.0
+    
+    if 'Package_Val' in df.columns:
+        valid_pkgs = df[df['Package_Val'] > 0]['Package_Val']
+        if not valid_pkgs.empty:
+            high_pkg = valid_pkgs.max() / 100000
+            avg_pkg = valid_pkgs.mean() / 100000
+            
+    # 3. Top Companies
+    top_companies = []
+    if 'Company' in df.columns:
+        companies_raw = df['Company'].astype(str).tolist()
+        all_companies = []
+        for c in companies_raw:
+             # Handle comma separated
+             for sub_c in c.replace(',', ';').split(';'):
+                 clean_c = sub_c.strip().title()
+                 if clean_c and clean_c.lower() != 'nan' and len(clean_c) > 2:
+                     all_companies.append(clean_c)
         
+        from collections import Counter
+        c_counts = Counter(all_companies)
+        # Top 30 unique (User asked for "all", providing a comprehensive list)
+        top_companies = [c for c, _ in c_counts.most_common(30)]
+        
+    # Response
+    if "highest" in msg or "max" in msg:
+        if high_pkg > 0:
+            return f"The highest package for **{target_branch if target_branch else 'College'}** is **{high_pkg:.2f} LPA**."
+        else:
+            return f"Highest package info is not available for **{target_branch if target_branch else 'this query'}**."
+    
+    if "average" in msg:
+        if avg_pkg > 0:
+            return f"The average package for **{target_branch if target_branch else 'College'}** is **{avg_pkg:.2f} LPA**."
+        else:
+            return f"Average package info is not available for **{target_branch if target_branch else 'this query'}**."
+        
+    if "companies" in msg or "recruiters" in msg or "company" in msg:
+        return f"**Companies for {target_branch if target_branch else 'College'}**:\n{', '.join(top_companies)}"
+        
+    if "count" in msg or "how many" in msg:
+        return f"Total students placed: **{count}**."
+
+    # Default Summary
+    summary = f"**{target_branch if target_branch else 'Overall'} Placement Stats**:\n"
+    summary += f"- Total Placed: {count}\n"
+    
+    if high_pkg > 0:
+        summary += f"- Highest Package: {high_pkg:.2f} LPA\n"
+    if avg_pkg > 0:
+        summary += f"- Average Package: {avg_pkg:.2f} LPA\n"
+        
+    summary += f"- Top Recruiters: {', '.join(top_companies[:10])} and many more."
+    return summary
+
+def get_people_info(message):
+    msg = message.lower()
+    
+    # Creator Info
+    if "creator" in msg or "who created" in msg or "made you" in msg:
+        return ("I am created by the students of AIML in 2026 on the occasion of Strides 2026 by "
+                "Tharak Ram, Alisha, Rohit, Ashis, Vijay, Mahesh in the guidance of "
+                "Dr. Radha Krishna Sir, V. Ananthalaksmi Mam, Janardhan Rao Sir.")
+
+    # 1. Direct Role Lookup (Key Match)
+    clean_msg = msg.replace(" of ", " ").replace(" the ", " ").replace(" is ", " ")
+    
+    found_role = None
+    best_len = 0
+    
+    for role, name in PEOPLE_DICT.items():
+        if role in clean_msg:
+             if len(role) > best_len:
+                 best_len = len(role)
+                 found_role = (role, name)
+                 
+    if found_role:
+        return f"The {found_role[0].upper()} is **{found_role[1]}**."
+
+    # 2. Reverse Lookup (Name Match)
+    ignore_TITLES = ["dr", "dr.", "mr", "mr.", "mrs", "mrs.", "sir", "mam", "prof", "prof."]
+    
+    for role, name in PEOPLE_DICT.items():
+        name_lower = name.lower()
+        name_parts = name_lower.replace('.', ' ').split()
+        for part in name_parts:
+            if len(part) > 2 and part not in ignore_TITLES and part in msg.split():
+                 return f"**{name}** is the {role.title()}."
+                
+    return "I couldn't find that person in my database."
+
+def predict_admission(message):
+    if not admission_model:
+        return "Admission prediction model is unavailable."
+
     msg = message.lower()
     
     try:
-        # Extract Rank
-        rank = -1
+        # Rank
         match_rank = re.search(r'rank\s*[:=]?\s*(\d+)', msg)
-        if match_rank:
-            rank = int(match_rank.group(1))
+        rank = int(match_rank.group(1)) if match_rank else 0
+        if rank == 0:
+            nums = [int(s) for s in msg.split() if s.isdigit()]
+            for n in nums:
+                if n > 1000: rank = n; break
         
-        # Extract Gender
-        gender = None
-        if "female" in msg or " gender f" in msg or "gender:f" in msg:
-            gender = "F"
-        elif "male" in msg or " gender m" in msg or "gender:m" in msg:
-            gender = "M"
-            
-        # Extract Category
-        category = None
-        # Naive matching: specific to general order
+        if rank == 0:
+            return "Please provide your Rank to predict admission chances."
+
+        # Gender
+        gender = "M" if "male" in msg or "boy" in msg else ("F" if "female" in msg or "girl" in msg else None)
+        
+        # Category
+        category = "OC"
         cats = ['oc_ews', 'bc_a', 'bc_b', 'bc_c', 'bc_d', 'bc_e', 'oc', 'sc', 'st']
         for c in cats:
             if c in msg.replace('-', '_'):
                 category = c.upper()
                 break
-        
-        # Extract Branch
-        branch = None
-        aliases = {
-            "CAI": ["aiml", "ai&ml", "cse(aiml)"],
-            "CSM": ["csm", "cse(ai&ml)"],
-            "MEC": ["mec", "mech", "mechanical", "mac", "mechanal"], # Added 'mac' (common STT error)
-            "ECE": ["ece", "electronics"],
-            "EEE": ["eee", "electrical", "electrical engineering", "triple e"],
-            "CIV": ["civil", "civil engineering"],
-            "CSE": ["cse", "computer science", "cse core", "computer"],
-            "INF": ["it", "information technology", "cse(it)"],
-            "CSD": ["ds", "data science", "cse(ds)"],
-            "CSC": ["cs", "cyber security", "cse(cs)"]
-        }
-        
-        for code, keywords in aliases.items():
-            for kw in keywords:
-                # Use word boundary or simple contain check for robustness?
-                # Simple contain is safer for short STT fragments like "mac"
-                # But "it" needs boundary.
-                if kw == "it":
-                     if re.search(r"\b" + re.escape(kw) + r"\b", msg):
-                         branch = code
-                         break
-                elif kw in msg:
-                    branch = code
-                    break
-            if branch: break
-            
-        # Construct specific feedback if missing details
-        missing = []
-        if rank <= 0: missing.append("Rank")
-        if not gender: missing.append("Gender")
-        if not category: missing.append("Category")
-        if not branch: missing.append("Branch")
-        
-        if missing:
-            # If "rank" was mentioned but details are missing, we give specific help
-            if len(missing) < 4:
-                return f"I missed the following details: {', '.join(missing)}. Please say them clearly. Example: 'Rank 30000 Category OC Gender Male Branch CSE'."
-            else:
-                 return "Please provide Rank, Gender, Category, and Branch to predict eligibility."
+        if "ews" in msg and category == "OC": category = "OC_EWS"
 
-        # Lookup Cutoff
-        key = (branch, gender, category)
-        cutoff_rank = ADMISSION_CUTOFFS.get(key)
+        # Branch
+        branch = "CSE" 
+        branch_map = {
+            "cse": "CSE", "computer": "CSE",
+            "aiml": "CAI", "ai": "CAI", 
+            "ece": "ECE", "electronics": "ECE",
+            "eee": "EEE", "electrical": "EEE",
+            "mech": "MEC", "mechanical": "MEC",
+            "civil": "CIV", 
+            "it": "INF", "inf": "INF",
+            "ds": "CSD", "data science": "CSD",
+            "csm": "CSM"
+        }
+        found_branch = None
+        for k, v in branch_map.items():
+            if k in msg:
+                found_branch = v
+                break
         
-        # Fallback: if exact match not found (e.g. no girls in mechanical for that category), try finding similar
-        # But for now, let's just report unknown.
+        if not found_branch:
+             return f"Please specify the branch (e.g., CSE, ECE, AIML). I understood Rank: {rank}"
+             
+        if not gender:
+             return f"Please specify your gender (Male/Female)."
+
+        # Predict using Pipeline (DataFrame Input)
+        input_df = pd.DataFrame([{
+            'Rank': rank,
+            'Branch': found_branch,
+            'Gender': gender,
+            'Category': category
+        }])
         
-        result_msg = f"**Admission Prediction**\n"
-        result_msg += f"- Details: Rank {rank}, {gender}, {category}, {branch}\n"
+        prob = admission_model.predict_proba(input_df)[0][1]
+        percent = prob * 100
         
-        if cutoff_rank:
-            result_msg += f"- 2023 Cutoff Rank: {cutoff_rank}\n"
-            if rank <= cutoff_rank:
-                result_msg += f"Yes, you have a high chance! Your rank is within the last year's cutoff."
-            else:
-                result_msg += f"Difficult. Your rank is higher than the last year's cutoff ({cutoff_rank})."
-        else:
-            result_msg += f"No data found for this exact combination ({branch}, {gender}, {category}) in 2023 records."
-            
-        return result_msg
+        status = "High Chance" if percent > 70 else ("Moderate Chance" if percent > 40 else "Low Chance")
+        
+        return (f"**Admission Prediction** (Logistic Regression)\n"
+                f"Details: Rank {rank}, {found_branch}, {gender}, {category}\n"
+                f"Probability of Admission: **{percent:.1f}%**\n"
+                f"Status: **{status}**")
 
     except Exception as e:
-        print(f"Prediction Error: {e}")
-        return "An error occurred during prediction."
+        return f"Error in prediction: {e}"
 
-# ==========================
-# PLACEMENT QUERY ENGINE
-# ==========================
-# ==========================
-# PLACEMENT QUERY ENGINE
-# ==========================
-def query_placements(message):
-    if PLACEMENT_DF is None or PLACEMENT_DF.empty:
-        return "Placement data is currently unavailable."
-        
-    msg = message.lower()
+def get_intent(message):
+    if not intent_model:
+        return "UNKNOWN"
+    return intent_model.predict([message])[0]
+
+def respond(message, history):
+    if not message:
+        return ""
     
-    # Normalize Branch Names for lookup
-    # Order matters: check longer/specific matches first
-    branch_map = {
-        "aiml": "AIML", "ai & ml": "AIML", "artificial intelligence": "AI", "cse(ai)": "AI", "ai": "AI",
-        "data science": "DS", "cse(ds)": "DS", "ds": "DS",
-        "information technology": "IT", "it": "IT",
-        "civil engineering": "CIVIL", "civil": "CIVIL", 
-        "mechanical": "MECH", "mech": "MECH", 
-        "electronics": "ECE", "ece": "ECE",
-        "electrical": "EEE", "eee": "EEE",
-        "computer science": "CSE", "cse": "CSE"
+    msg_lower = message.lower()
+    
+    if "intake" in msg_lower or "seats" in msg_lower or "capacity" in msg_lower:
+        return get_intake_info(message)
+        
+    # Admission Process Override (Fix for intent misclassification)
+    # Force search for "Admissions Process" to get the right KB chunk
+    if ("admission" in msg_lower and ("process" in msg_lower or "procedure" in msg_lower)) or "how to join" in msg_lower or "eligibility" in msg_lower:
+         answer = kb.search("Admissions Process B.Tech M.Tech Eligibility") 
+         return answer if answer else "Admission is determined by EAPCET rank for B.Tech and GATE/PGECET for M.Tech."
+         
+    # Course Info Override (Fix for M.Tech/B.Tech lookup issues)
+    if "mtech" in msg_lower or "m.tech" in msg_lower:
+         return ("**M.Tech Program (Master of Technology)**:\n"
+                 "Pragati Engineering College offers a 2-year M.Tech (MTech) postgraduate program in specialized engineering fields. "
+                 "The program is AICTE-approved and affiliated with JNTU Kakinada, focusing on advanced technical knowledge, research skills, "
+                 "and industry-oriented expertise. Branches: CSE, VLSI Design, Power Electronics, Structural Engineering.")
+         
+    if "btech" in msg_lower or "b.tech" in msg_lower:
+         return ("**About B.Tech (Bachelor of Technology)**:\n"
+                 "Pragati Engineering College offers a 4-year B.Tech (BTech) program in multiple engineering disciplines. "
+                 "The curriculum is AICTE-approved and affiliated with JNTU Kakinada. It focuses on technical foundations, practical skills, and industry readiness. "
+                 "Available branches: CSE, AIML, Data Science, AI, Cyber Security, IT, ECE, EEE, Mechanical, Civil.")
+    
+    # Branch Info Override (Fix for "tell me about ds in pragati..." noise)
+    # Detects branch keywords and searches specifically for that branch description
+    branch_lookup = {
+        "aiml": "B.Tech AIML",
+        "human": "B.Tech AIML", # Context aware if needed
+        "artificial intelligence": "B.Tech CSE (Artificial Intelligence)",
+        "ai": "B.Tech CSE (Artificial Intelligence)",
+        "cyber": "B.Tech CSE (Cyber Security)",
+        "security": "B.Tech CSE (Cyber Security)",
+        "data science": "B.Tech CSE (Data Science)",
+        "ds": "B.Tech CSE (Data Science)",
+        "cse": "B.Tech CSE (Computer Science & Engineering – Core)",
+        "computer science": "B.Tech CSE (Computer Science & Engineering – Core)",
+        "it": "B.Tech IT (Information Technology)",
+        "information technology": "B.Tech IT (Information Technology)",
+        "ece": "B.Tech ECE",
+        "electronics": "B.Tech ECE",
+        "eee": "B.Tech EEE",
+        "electrical": "B.Tech EEE",
+        "mech": "B.Tech ME",
+        "mechanical": "B.Tech ME",
+        "civil": "B.Tech CE"
     }
     
-    target_branch = None
-    # Use word boundary check to avoid "cse" matching "civil" (if 'c' matched?) or similar issues
-    # "cse" matching "civil" shouldn't happen with simple substring unless "c" or "s" was mapped?
-    # The previous map had "ce": "CIVIL". "cse" contains "ce". THAT WAS THE BUG.
-    # Removed "ce": "CIVIL" and ensured order.
+    # Check if user is asking "about" a branch
+    if "about" in msg_lower or "explain" in msg_lower or "tell me" in msg_lower:
+        # Sort keys by length so "data science" matches before "ds" or "cse"
+        sorted_branches = sorted(branch_lookup.keys(), key=len, reverse=True)
+        found_target = None
+        detected_key = None
+        
+        for k in sorted_branches:
+            # Word boundary check to avoid partial matches like 'it' in 'with'
+            if re.search(r"\b" + re.escape(k) + r"\b", msg_lower):
+                found_target = branch_lookup[k]
+                detected_key = k
+                break
+        
+        if found_target:
+             answer = kb.search(found_target)
+             if answer:
+                 # Auto-append placements
+                 p_branch = found_target  # reasonable placeholder for matching
+                 if "AIML" in found_target: p_branch = "aiml"
+                 elif "Data Science" in found_target: p_branch = "ds"
+                 elif "Cyber" in found_target: p_branch = "cyber"
+                 elif "Artificial Intelligence" in found_target: p_branch = "ai"
+                 elif "IT" in found_target: p_branch = "it"
+                 elif "ECE" in found_target: p_branch = "ece"
+                 elif "EEE" in found_target: p_branch = "eee"
+                 elif "ME" in found_target: p_branch = "mech"
+                 elif "CE" in found_target: p_branch = "civil"
+                 elif "CSE" in found_target: p_branch = "cse"
+                 
+                 try:
+                    stats = get_placement_info(f"placements of {p_branch}")
+                    if "unavailable" not in stats.lower() and "no placement records" not in stats.lower():
+                         answer += f"\n\n**Placement Highlights for {p_branch.upper()}**:\n"
+                         lines = stats.split('\n')
+                         relevant_lines = [l for l in lines if any(k in l for k in ["Highest", "Average", "Total", "Recruiters"])]
+                         answer += "\n".join(relevant_lines)
+                 except: pass
+                 
+                 return answer
+
+    # Typo tolerance for branches query
+    if re.search(r"bra[a]*nch|cours|program", msg_lower):
+         # Route to "Available Branches" in KB or Intent
+         return kb.search("available branches") or "We offer CSE, AIML, DS, IT, ECE, EEE, MECH, CIVIL, CYBER SECURITY."
+
+    # 1. ML Intent Detection
+    intent = get_intent(message)
+    print(f"Query: {message} -> Detected Intent: {intent}")
     
-    for k, v in branch_map.items():
-        # Check as whole word using word boundaries, case insensitive flag in search
-        # Problem: "ai" might be inside "said"? No, \b handles that.
-        # Problem: "ai" in "aiml"? \b handles that.
-        pattern = r"\b" + re.escape(k) + r"\b"
-        if re.search(pattern, msg, re.IGNORECASE):
-            target_branch = v
-            break
-            
-    # Intent Detection with Regex for robustness
-    # 1. "How many" (Count)
-    # Matches: "how many", "ho many", "number of", "count of", "total placements"
-    # Also matches "placements of [branch]" which implies count or summary
-    # Typo: "total placemnts", "total placemnets" -> catch "total place" or "placem"
-    if re.search(r"(how|ho|total)\s*(many|number|count|placem|place)", msg) or re.search(r"placem(e)?n?ts?\s*(of|for|in)", msg):
-        if target_branch:
-            # Specific branch count
-            count = len(PLACEMENT_DF[PLACEMENT_DF['Branch'] == target_branch])
-            return f"The number of placements for **{target_branch}** is **{count}**."
+    if intent == "ADMISSION":
+        # Split Admission Intent: Intake vs Process
+        if any(w in msg_lower for w in ["process", "how to", "eligibility", "join", "fee", "application"]):
+             # KB Search
+             return kb.search(message) or "Admission is via EAPCET/ECET. Check website for details."
         else:
-            # Total count
-            if "aiml" in msg or "ai" in msg or "cse" in msg: 
-                # Fallback if valid branch name exists but wasn't mapped effectively above?
-                # Actually target_branch logic is solid. If we are here, no branch matched.
-                pass
-            count = len(PLACEMENT_DF)
-            return f"A total of **{count}** students have been placed across all branches."
-
-    # 2. "Companies" (List)
-    # Matches: "companies", "company", "recruiters", "hiring", "visit"
-    # Typo: "compines", "componies" -> catch "comp[a-z]*ies" or just "comp"
-    # Be careful not to match "computer"
-    if re.search(r"(compan|recruit|hir|visit|compin|compon)", msg):
-        branch_df = PLACEMENT_DF
-        if target_branch:
-            branch_df = PLACEMENT_DF[PLACEMENT_DF['Branch'] == target_branch]
-            
-        # Deduplicate Logic
-        companies_raw = branch_df['Company'].astype(str).tolist()
-        all_companies = []
-        for c in companies_raw:
-            # Handle multi-value cells like "TCS, Wipro"
-            for sub_c in c.replace(' and ', ',').split(','):
-                clean_c = sub_c.strip()
-                # Remove common legal suffixes for cleaner deduplication (visual only) if needed?
-                # or just lowercase comparison
-                if clean_c and clean_c.lower() != 'nan':
-                    all_companies.append(clean_c)
-        
-        # Smart Deduplication (Case Insensitive Counting, preserving original casing)
-        final_list = []
-        seen_lower = set()
-        for c in all_companies:
-            if c.lower() not in seen_lower:
-                seen_lower.add(c.lower())
-                final_list.append(c)
-        
-        # Only top 15 from the UNIQUE list? 
-        # No, we want most frequent.
-        from collections import Counter
-        # Normalize for counting
-        norm_companies = [c.title() for c in all_companies] 
-        comp_counts = Counter(norm_companies)
-        
-        # Top 15 by frequency
-        top_list = [c for c, _ in comp_counts.most_common(15)]
-        
-        scope = target_branch if target_branch else "overall"
-        return f"Top companies for **{scope}** include: {', '.join(top_list)}..."
-
-
-    # 3. "Highest/Least/Average Package"
-    if "package" in msg or "salary" in msg:
-        # Check for IT branch restriction or implied context
-        # Usage instructions: "only IT has packages"
-        target_df = PLACEMENT_DF
-        if target_branch:
-             target_df = PLACEMENT_DF[PLACEMENT_DF['Branch'] == target_branch]
-
-        # Check if valid package data exists for this slice
-        # If user asks for non-IT package, we should arguably say "Data unavailable" or "Check IT"
-        # But if they ask "Highest package" globally, we can show IT's highest.
-        
-        valid_pkgs = target_df[target_df['Package_Val'] > 0]['Package_Val']
-        
-        if valid_pkgs.empty:
-             return "Package information is currently only available for the IT branch."
-
-        val_fmt = lambda x: f"{x/100000:.2f} LPA"
-
-        if "highest" in msg or "max" in msg:
-             return f"The highest package recorded is **{val_fmt(valid_pkgs.max())}** (mainly from IT data)."
+             return get_intake_info(message)
              
-        if "least" in msg or "lowest" in msg or "min" in msg:
-             return f"The least package recorded is **{val_fmt(valid_pkgs.min())}**."
-             
-        if "average" in msg or "mean" in msg:
-             return f"The average package recorded is **{val_fmt(valid_pkgs.mean())}**."
-
-    # 4. Fallback: Use LLM with injected context
-    # We return None so the main loop calls the LLM pipeline
-    return None
-
-
-# ==========================
-# CHAT FUNCTION
-# ==========================
-def respond(message, history):
-    # Greeting Logic
-    msg_lower = message.lower().strip()
-    if msg_lower in ["hi", "hello", "hey", "hi there"]:
-        return "Hi, I am Pragati Engineering College AI. How can I help you?"
-
-    # 1. Correct Typos
-    corrected_message = correct_typos(message)
-
-    # 2. Fast Authority Lookup (Optimization for Speed)
-    lower_msg = corrected_message.lower()
-    for role, name in PEOPLE_DICT.items():
-        # Role Lookup (e.g. "Who is Principal")
-        if role in lower_msg:
-             if f"who is {role}" in lower_msg or f"{role} name" in lower_msg or lower_msg == role or f"who is the {role}" in lower_msg:
-                 return f"The {role.title()} is {name}."
-        
-        # Name Lookup (e.g. "Who is G Naresh")
-        # Check if the name (or significant part of it) is in the message
-        clean_name = name.lower().replace("dr.", "").replace("sir", "").strip()
-        if clean_name in lower_msg or name.lower() in lower_msg:
-             if "who is" in lower_msg:
-                 return f"{name} is the {role.title()}."
-
-    # 2. Check for Placement Queries
-    # Added "placed" to catch "how many students placed"
-    if "placement" in msg_lower or "package" in msg_lower or "salary" in msg_lower or "company" in msg_lower or "companies" in msg_lower or "highest" in msg_lower or "placed" in msg_lower:
-        response = query_placements(corrected_message)
-        if response:
-            return response
-        # If None, fall through to LLM (which has the placement context)
-
-
-    # 2. Check for ML Prediction Query
-    # Trigger keywords: "rank" AND ("branch" or "gender" or "category")
-    if "rank" in msg_lower:
-        if "gender" in msg_lower or "category" in msg_lower or "branch" in msg_lower:
-            prediction = predict_eligibility(corrected_message)
-            if prediction:
-                return prediction
-        # If we are here, it means "rank" was found but specific details were missing
-        # OR predict_eligibility failed.
-        return "To predict eligibility, please provide your Rank, Category, Gender, and Branch. For example: 'Rank 30000 Category OC Gender Male Branch CSE'."
-
-    # 3. Direct Fallback for "Intake" queries (Determinstic)
-    if "intake" in msg_lower or "how many" in msg_lower:
-        # NEW: Total Intake Handler
-        if "total" in msg_lower and "college" in msg_lower:
-             return f"The total intake of Pragati Engineering College is approximately {TOTAL_INTAKE} students."
-
-        for branch, count in GLOBAL_BRANCH_COUNTS.items():
-            # Improved matching: Check for whole word branch or simple string match
-            # Also handle the case where user says "intake of IT" (case insensitive)
+    elif intent == "RANK_PREDICTION": return predict_admission(message)
+    elif intent == "PLACEMENT": return get_placement_info(message)
+    elif intent == "PEOPLE": return get_people_info(message)
+    elif intent == "COLLEGE_INFO":
+        answer = kb.search(message)
+        if answer: 
+            # DYNAMIC PLACEMENT STATS INJECTION
+            # If the user asks about a branch, we should also show placement stats as requested.
+            # Check if answer contains branch keywords
+            branch_map = {
+                "AIML": "aiml", "CSE": "cse", "IT": "it", "ECE": "ece", 
+                "EEE": "eee", "ME": "mech", "CE": "civil", "Data Science": "ds", 
+                "Cyber Security": "cyber", "Artificial Intelligence": "ai"
+            }
             
-            # Use boundary check for short keys (2-3 chars), substring for longer
-            if len(branch) <= 3:
-                 if re.search(r"\b" + re.escape(branch.lower()) + r"\b", msg_lower):
-                     return f"{count} students admitted/approved for {branch}."
-            else:
-                 if branch.lower() in msg_lower:
-                     return f"{count} students admitted/approved for {branch}."
-
-    # 4. Help Command
-    if "show questions" in msg_lower or "help" in msg_lower:
-        help_text = "**Available Question Formats:**\n\n"
-        help_text += "**Principal/Personnel:**\n`Who is the Principal?`\n\n"
-        help_text += "**Admission Intake:**\n`What is the intake of CSE?`\n\n"
-        help_text += "**Eligibility Prediction:**\n`Rank 30000 Category OC Gender Male Branch CSE`"
-        return help_text
-
-    # 4. Use LLM for everything else
-    prompt = f"""
-{SYSTEM_CONTEXT}
-
-Question: {corrected_message}
-Answer:
-"""
-
-    result = qa_pipeline(
-        prompt,
-        max_length=200,
-        temperature=0.2,
-        repetition_penalty=1.2 # Prevent looping like "Principal --- Principal"
-    )
-
-    result_text = result[0]["generated_text"]
-    
-    # Post-process: Strip context leakage
-    if "--- People Information ---" in result_text:
-        result_text = result_text.split("--- People Information ---")[0]
-    if "Instructions:" in result_text:
-        result_text = result_text.split("Instructions:")[0]
-        
-    return result_text.strip()
-
+            detected_branch = None
+            # Sort keys by length descending to match specific branches first (e.g. 'Cyber Security' before 'CSE')
+            sorted_keys = sorted(branch_map.keys(), key=len, reverse=True)
+            
+            for key in sorted_keys:
+                if key in answer: # Answer mentions the branch name (e.g. "B.Tech AIML")
+                     detected_branch = branch_map[key]
+                     break
+            
+            if detected_branch:
+                # Fetch placement stats for this branch
+                try:
+                    stats = get_placement_info(f"placements of {detected_branch}")
+                    # Only append if we get valid stats (not "unavailable")
+                    if "unavailable" not in stats.lower() and "no placement records" not in stats.lower():
+                         answer += f"\n\n**Placement Highlights for {detected_branch.upper()}**:\n"
+                         lines = stats.split('\n')
+                         relevant_lines = [l for l in lines if any(k in l for k in ["Highest", "Average", "Total", "Recruiters"])]
+                         answer += "\n".join(relevant_lines)
+                except Exception as e:
+                    print(f"Error fetching dynamic stats: {e}")
+            
+            return f"{answer}"
+            
+        return "I couldn't find specific information in the college handbook."
+    elif intent == "GREETING":
+        return "Hello! I am your College AI Assistant. Ask me about Admissions, Placements, or Faculty."
+    else:
+        answer = kb.search(message, threshold=0.15)
+        if answer: return f"I think this might help:\n{answer}"
+        return "I'm not sure how to answer that."
 
 # ==========================
-# GRADIO UI
+# UI
 # ==========================
-# ==========================
-# GRADIO UI (Blocks with Legacy Chatbot)
-# ==========================
+demo = gr.ChatInterface(
+    respond,
+    title="🤖 Pragati AI Robo (ML Powered)",
+    description="Powered by Logistic Regression, Naive Bayes, and TF-IDF.",
+    examples=["Can I get seat with rank 40000 in CSE?", "Who is the Principal?", "Highest package?", "About college"]
+)
+
 if __name__ == "__main__":
-    import logging
-    logging.getLogger("transformers").setLevel(logging.ERROR)
-
-# ==========================
-# GRADIO UI
-# ==========================
-if __name__ == "__main__":
-    import logging
-    logging.getLogger("transformers").setLevel(logging.ERROR)
-    
-    # Reverting to the standard, stable ChatInterface
-    # No custom theme, no complex blocks.
-    # The "Help" feature is implemented as a clickable example.
-    
-    gr.ChatInterface(
-        respond,
-        title="AI College Robo 🤖",
-        description="AI-powered college information system using Google FLAN-T5",
-        examples=[
-            "Show Questions / Help",
-            "Who is the Principal?",
-            "What is the intake of CSE?",
-            "Rank 30000 Category OC Gender Male Branch CSE",
-            "Rank 60000 Category OC_EWS Gender Male Branch IT"
-        ]
-    ).launch()
+    demo.launch(share=False)

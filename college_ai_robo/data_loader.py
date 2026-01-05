@@ -63,9 +63,9 @@ def load_placement_data(base_dir):
     
     # Column identification keywords
     col_keywords = {
-        "Roll No": ["roll no", "rank", "ht no", "reg no", "roll number"],
+        "Roll No": ["roll no", "rank", "ht no", "reg no"],
         "Name": ["student name", "name of the student", "full name", "name of student"],
-        "Company": ["company", "name of the company", "company selected", "recruiter", "selected companies"],
+        "Company": ["company", "name of the company", "company selected", "recruiter"],
         "Branch": ["branch"],
         "Package": ["package", "ctc", "salary"]
     }

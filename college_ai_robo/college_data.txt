@@ -1,0 +1,68 @@
+About Pragati Engineering College:
+Pragati Engineering College is an autonomous engineering institution located in Surampalem, East Godavari, Andhra Pradesh, offering AICTE-approved B.Tech and M.Tech programs in various engineering disciplines. Established in 2001 and affiliated with JNTU Kakinada, the college is known for strong academics, good placement opportunities, and a scenic campus environment.
+
+Available Branches:
+Undergraduate (B.Tech) Programs:
+- Computer Science and Engineering (CSE)
+- CSE (Artificial Intelligence & Machine Learning) - CIM/AIML
+- CSE (Data Science) - CSD/DS
+- CSE (Artificial Intelligence) - CAI/AI
+- CSE (Cyber Security) - CSC/Cyber
+- Information Technology (IT)
+- Electronics and Communication Engineering (ECE)
+- Electrical and Electronics Engineering (EEE)
+- Mechanical Engineering (ME)
+- Civil Engineering (CE)
+
+Postgraduate (M.Tech) Programs:
+- Computer Science and Engineering
+- VLSI Design
+- Power Electronics
+- Structural Engineering
+
+Admissions Process:
+B.Tech Admissions:
+- EAPCET (AP EAPCET): Most seats are filled through state government counseling based on AP EAPCET rank.
+- Management (B-Category) Quota: Direct admission based on Intermediate (10+2) marks, subject to eligibility and seat availability.
+
+M.Tech Admissions:
+- PGECET / GATE: Through state counseling based on rank.
+- Management Quota: Direct admission based on B.Tech marks and eligibility.
+
+Basic Eligibility:
+- B.Tech: Passed 10+2 with Mathematics, Physics, and Chemistry.
+- M.Tech: B.Tech/BE in a relevant engineering discipline.
+
+About B.Tech (Bachelor of Technology):
+Pragati Engineering College offers a 4-year B.Tech (BTech) program in multiple engineering disciplines, designed to build strong technical foundations, practical skills, and industry readiness. The curriculum is AICTE-approved and affiliated with JNTU Kakinada, covering core engineering subjects, labs, projects, and industry-oriented electives. With experienced faculty, modern labs, internships, and active training & placement support, the B.Tech program prepares students for careers in software, core engineering sectors, research, and higher studies.
+
+
+B.Tech AIML (Artificial Intelligence & Machine Learning):
+The B.Tech AIML course in Pragati Engineering College was started in 2020–21 with an intake later increased to 180 students. Its duration is 4 years. The HOD is Dr. A. Radha Krishna Sir. The branch focuses on AI, machine learning, data analytics, and intelligent systems. It is growing rapidly with strong placements, highest package reaching 40 LPA.
+
+B.Tech CSE (Computer Science & Engineering – Core):
+The B.Tech CSE course in Pragati Engineering College was started in 2001. Its duration is 4 years. The HOD is Dr. D. V. Manjula Mam. Focuses on programming, algorithms, OS, databases. Strongest branch with excellent placements in IT product and service companies.
+
+B.Tech CSE (Cyber Security):
+The B.Tech CSE (Cyber Security) course meets industry demand. Duration 4 years. The HOD is Smt. T. Ganga Bhavani Mam. Focuses on network security, ethical hacking, cryptography, cloud security. Placements are improving for certified students.
+
+B.Tech CSE (Data Science) DS:
+The B.Tech CSE (Data Science) course addresses data demand. Duration 4 years. The HOD is Sri M. V. Rajesh Sir. Focuses on statistics, ML, big data, analytics. Prepares for data analyst/engineer roles with good placements.
+
+B.Tech CSE (Artificial Intelligence) AI:
+The B.Tech CSE (Artificial Intelligence) course started in 2021. Duration 4 years. The HOD is Smt. K. Lakshmi Viveka Mam. Focuses on AI concepts, deep learning, neural networks, robotics. Growing placements in AI software.
+
+B.Tech IT (Information Technology):
+The B.Tech IT course started in 2001. Duration 4 years. The HOD is Sri G. Satya Mohan Chowdary Sir. Focuses on software dev, networking, web tech. Placements consistent with CSE.
+
+B.Tech ECE (Electronics & Communication Engineering):
+B.Tech ECE started early. Duration 4 years. The HOD is Dr. V. Prasanth Sir. Focuses on electronics, VLSI, embedded systems, comms. Placements in core and IT sectors.
+
+B.Tech EEE (Electrical & Electronics Engineering):
+B.Tech EEE started in 2002. Duration 4 years. The HOD is Sri K. V. Durga Prasad Sir. Focuses on power systems, machines, control, renewables. Careers in power, automation, and IT.
+
+B.Tech ME (Mechanical Engineering):
+B.Tech Mechanical started in 2001. Duration 4 years. The HOD is Dr. G. Avinash Sir. Focuses on design, manufacturing, thermodynamics. Placements in core manufacturing and software.
+
+B.Tech CE (Civil Engineering):
+B.Tech Civil started in 2001. Duration 4 years. The HOD is Dr. B. Satyanarayana Sir. Focuses on structural design, construction, surveying. Careers in construction, govt, higher studies.

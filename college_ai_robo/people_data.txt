@@ -5,6 +5,73 @@ Director Academics: Dr. K. Satyanarayana Sir
 Principal: Dr. G. Naresh Sir
 Dean: Dr. Radhika Mani Mam
 Placement Incharge: Nagendra Sir
+
+# CSE (AIML)
 HOD AIML: Dr. Radha Krishna Sir
+HOD CSE(AIML): Dr. Radha Krishna Sir
+HOD CSE (AIML): Dr. Radha Krishna Sir
+HOD CSE-AIML: Dr. Radha Krishna Sir
+HOD AI&ML: Dr. Radha Krishna Sir
 Placement Coordinator AIML: Janardhan Rao Sir
 Second Year Coordinator AIML: V. Ananthalaksmi Mam
+
+# CSE (Core)
+HOD CSE: Dr. D. V. Manjula Mam
+HOD Computer Science: Dr. D. V. Manjula Mam
+Placement Coordinator CSE: Srinivas Sir
+Second Year Coordinator CSE: Sailaja Mam
+
+# CSE (Data Science)
+HOD CSE (DS): M. V. Rajesh Sir
+HOD CSE(DS): M. V. Rajesh Sir
+HOD DS: M. V. Rajesh Sir
+HOD Data Science: M. V. Rajesh Sir
+HOD CSE (Data Science): M. V. Rajesh Sir
+Placement Coordinator DS: Ramesh Sir
+Second Year Coordinator DS: Haritha Mam
+
+# CSE (Artificial Intelligence)
+HOD CSE (AI): K. Lakshmi Viveka Mam
+HOD CSE(AI): K. Lakshmi Viveka Mam
+HOD AI: K. Lakshmi Viveka Mam
+HOD Artificial Intelligence: K. Lakshmi Viveka Mam
+Placement Coordinator AI: Prasad Sir
+Second Year Coordinator AI: Divya Mam
+
+# CSE (Cyber Security)
+HOD CSE (Cyber Security): T. Ganga Bhavani Mam
+HOD Cyber: T. Ganga Bhavani Mam
+HOD Cyber Security: T. Ganga Bhavani Mam
+HOD CSE(Cyber): T. Ganga Bhavani Mam
+HOD CSE (CS): T. Ganga Bhavani Mam
+Placement Coordinator Cyber: Suresh Sir
+Second Year Coordinator Cyber: Keerthana Mam
+
+# Information Technology (IT)
+HOD IT: G. Satya Mohan Chowdary Sir
+HOD Information Technology: G. Satya Mohan Chowdary Sir
+Placement Coordinator IT: Kiran Sir
+Second Year Coordinator IT: Anusha Mam
+
+# Electronics & Communication Engineering (ECE)
+HOD ECE: Dr. V. Prasanth Sir
+Placement Coordinator ECE: Ravi Kumar Sir
+Second Year Coordinator ECE: Sowmya Mam
+
+# Electrical & Electronics Engineering (EEE)
+HOD EEE: K. V. Durga Prasad Sir
+Placement Coordinator EEE: Naresh Sir
+Second Year Coordinator EEE: Sandhya Mam
+
+# Mechanical Engineering (ME)
+HOD ME: Dr. G. Avinash Sir
+HOD MECH: Dr. G. Avinash Sir
+HOD Mechanical: Dr. G. Avinash Sir
+Placement Coordinator ME: Subrahmanyam Sir
+Second Year Coordinator ME: Lavanya Mam
+
+# Civil Engineering (CE)
+HOD CE: Dr. B. Satyanarayana Sir
+HOD Civil: Dr. B. Satyanarayana Sir
+Placement Coordinator CE: Murali Sir
+Second Year Coordinator CE: Bhavani Mam
