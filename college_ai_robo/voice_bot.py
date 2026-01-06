@@ -80,28 +80,30 @@ def force_stop_speaking():
     GPIO.output(RED_LED, GPIO.LOW)
     GPIO.output(GREEN_LED, GPIO.LOW)
 
-    print("[✓ Speech force-stopped]")
+    print("[âœ“ Speech force-stopped]")
 
 def clean_text_for_speech(text):
     text = text.replace("**", "").replace("__", "").replace("*", "")
     text = text.replace("`", "")
     return text
 
-# ==========================
-# 🎙️ FESTIVAL TTS (ONLY CHANGE)
-# ==========================
+
 def speak(text, mic_source=None):
     """Convert text to speech using Google gTTS with interrupt support + caching."""
+    
     global stop_speaking, is_speaking, audio_process
 
     try:
         stop_speaking = False  # Reset flag
         is_speaking = True  # Mark that we're speaking
+        GPIO.output(RED_LED, GPIO.LOW)
+        GPIO.output(GREEN_LED, GPIO.HIGH)
+
         
         clean_text = clean_text_for_speech(text)
         print(f"Robot: {text}")
 
-        # 🔥 CACHE LOGIC (KEY PART)
+        # ðŸ”¥ CACHE LOGIC (KEY PART)
         text_hash = hashlib.md5(clean_text.encode()).hexdigest()
         filename = os.path.join(CACHE_DIR, f"{text_hash}.mp3")
 
@@ -152,6 +154,7 @@ def speak(text, mic_source=None):
                 engine.say(clean_text)
                 engine.runAndWait()
                 engine.stop()
+        GPIO.output(GREEN_LED, GPIO.LOW)
 
         # Mark speech complete
         is_speaking = False
