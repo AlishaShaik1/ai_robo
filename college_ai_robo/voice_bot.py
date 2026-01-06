@@ -91,33 +91,74 @@ def clean_text_for_speech(text):
 # 🎙️ FESTIVAL TTS (ONLY CHANGE)
 # ==========================
 def speak(text, mic_source=None):
-    global stop_speaking, is_speaking, festival_process
+    """Convert text to speech using Google gTTS with interrupt support + caching."""
+    global stop_speaking, is_speaking, audio_process
 
     try:
-        stop_speaking = False
-        is_speaking = True
-        GPIO.output(RED_LED, GPIO.LOW)
-        GPIO.output(GREEN_LED, GPIO.HIGH)
-
+        stop_speaking = False  # Reset flag
+        is_speaking = True  # Mark that we're speaking
+        
         clean_text = clean_text_for_speech(text)
         print(f"Robot: {text}")
 
-        festival_process = subprocess.Popen(
-            ["festival", "--tts"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        festival_process.stdin.write(clean_text.encode("utf-8"))
-        festival_process.stdin.close()
-        festival_process.wait()
+        # 🔥 CACHE LOGIC (KEY PART)
+        text_hash = hashlib.md5(clean_text.encode()).hexdigest()
+        filename = os.path.join(CACHE_DIR, f"{text_hash}.mp3")
+
+        # Generate audio ONLY if not cached
+        if not os.path.exists(filename):
+            tts = gTTS(text=clean_text, lang="en", slow=False)
+            tts.save(filename)
+
+        # ======================
+        # PLAY AUDIO (LINUX / PI)
+        # ======================
+        if platform.system() == "Linux":
+            audio_process = subprocess.Popen(
+                ["mpg123", "-q", filename],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
+            while audio_process.poll() is None:
+                if stop_speaking:
+                    print("[Speech interrupted]")
+                    audio_process.terminate()
+                    audio_process.wait()
+                    break
+                time.sleep(0.1)
+
+        # ======================
+        # WINDOWS PLAYBACK
+        # ======================
+        else:
+            try:
+                from pygame import mixer
+                mixer.init()
+                mixer.music.load(filename)
+                mixer.music.play()
+
+                while mixer.music.get_busy():
+                    if stop_speaking:
+                        print("[Speech interrupted]")
+                        mixer.music.stop()
+                        break
+                    time.sleep(0.1)
+
+                mixer.music.unload()
+
+            except ImportError:
+                engine = pyttsx3.init()
+                engine.say(clean_text)
+                engine.runAndWait()
+                engine.stop()
+
+        # Mark speech complete
+        is_speaking = False
 
     except Exception as e:
         print(f"TTS Error: {e}")
-
-    finally:
         is_speaking = False
-        GPIO.output(GREEN_LED, GPIO.LOW)
 
 # ==========================
 # LISTEN FUNCTION
