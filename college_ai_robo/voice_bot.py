@@ -6,7 +6,26 @@ import platform
 import subprocess
 import os
 import uuid
+import threading
+import hashlib
+CACHE_DIR = "/tmp/chitti_tts_cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+import signal
 from gtts import gTTS
+
+# ==========================
+# GPIO SETUP (NEW FEATURE)
+# ==========================
+import RPi.GPIO as GPIO
+
+RED_LED = 17    # Listening
+GREEN_LED = 19  # Speaking
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(RED_LED, GPIO.OUT)
+GPIO.setup(GREEN_LED, GPIO.OUT)
+GPIO.output(RED_LED, GPIO.LOW)
+GPIO.output(GREEN_LED, GPIO.LOW)
 
 # Import the response logic from your existing app
 try:
@@ -24,44 +43,81 @@ recognizer = sr.Recognizer()
 recognizer.energy_threshold = 300
 recognizer.dynamic_energy_threshold = True
 
+# Global variables for stop control
+stop_speaking = False
+is_speaking = False
+audio_process = None
+festival_process = None
+
+def force_stop_speaking():
+    """Immediately stop current speech."""
+    global stop_speaking, is_speaking, audio_process, festival_process
+
+    stop_speaking = True
+    is_speaking = False
+
+    if festival_process and festival_process.poll() is None:
+        try:
+            festival_process.terminate()
+        except Exception:
+            pass
+
+    if audio_process and audio_process.poll() is None:
+        try:
+            audio_process.terminate()
+            audio_process.wait()
+        except Exception:
+            pass
+
+    try:
+        from pygame import mixer
+        if mixer.get_init() and mixer.music.get_busy():
+            mixer.music.stop()
+            mixer.music.unload()
+    except Exception:
+        pass
+
+    GPIO.output(RED_LED, GPIO.LOW)
+    GPIO.output(GREEN_LED, GPIO.LOW)
+
+    print("[✓ Speech force-stopped]")
+
 def clean_text_for_speech(text):
-    """Remove markdown and special characters for better speech."""
     text = text.replace("**", "").replace("__", "").replace("*", "")
     text = text.replace("`", "")
     return text
 
 # ==========================
-# ✅ UPDATED VOICE FUNCTION (gTTS – PRODUCTION)
+# 🎙️ FESTIVAL TTS (ONLY CHANGE)
 # ==========================
-def speak(text):
-    """Convert text to speech using Google gTTS (stable voice)."""
+def speak(text, mic_source=None):
+    global stop_speaking, is_speaking, festival_process
+
     try:
+        stop_speaking = False
+        is_speaking = True
+        GPIO.output(RED_LED, GPIO.LOW)
+        GPIO.output(GREEN_LED, GPIO.HIGH)
+
         clean_text = clean_text_for_speech(text)
         print(f"Robot: {text}")
 
-        # Generate unique temp file
-        filename = f"/tmp/chitti_tts_{uuid.uuid4()}.mp3"
-
-        # Google TTS
-        tts = gTTS(text=clean_text, lang="en", slow=False)
-        tts.save(filename)
-
-        # Play audio (Linux / Raspberry Pi)
-        if platform.system() == "Linux":
-            os.system(f"mpg123 {filename} > /dev/null 2>&1")
-        else:
-            # Windows fallback
-            engine = pyttsx3.init()
-            engine.say(clean_text)
-            engine.runAndWait()
-            engine.stop()
-
-        # Cleanup
-        if os.path.exists(filename):
-            os.remove(filename)
+        festival_process = subprocess.Popen(
+            ["festival", "--tts"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        festival_process.stdin.write(clean_text.encode("utf-8"))
+        festival_process.stdin.close()
+        festival_process.wait()
 
     except Exception as e:
         print(f"TTS Error: {e}")
+
+    finally:
+        is_speaking = False
+        GPIO.output(GREEN_LED, GPIO.LOW)
 
 # ==========================
 # LISTEN FUNCTION
@@ -70,25 +126,53 @@ def listen_for_command(source):
     recognizer.pause_threshold = 1.5
     recognizer.dynamic_energy_adjustment_ratio = 1.5
 
+    GPIO.output(RED_LED, GPIO.HIGH)
     print("Listening... (Say 'chitti' to wake me up)")
+
     try:
         audio = recognizer.listen(source, timeout=5, phrase_time_limit=20)
+        GPIO.output(RED_LED, GPIO.LOW)
         print("Recognizing...")
         command = recognizer.recognize_google(audio, language='en-IN')
         print(f"User said: {command}")
         return command.lower()
 
     except sr.WaitTimeoutError:
+        GPIO.output(RED_LED, GPIO.LOW)
         return None
     except sr.UnknownValueError:
+        GPIO.output(RED_LED, GPIO.LOW)
         return None
     except sr.RequestError as e:
-        print(f"Could not request results; {e}")
+        GPIO.output(RED_LED, GPIO.LOW)
         speak("I am having trouble connecting to the internet.")
         return None
     except Exception as e:
+        GPIO.output(RED_LED, GPIO.LOW)
         print(f"Microphone Error: {e}")
         return None
+
+# ==========================
+# BACKGROUND STOP LISTENER
+# ==========================
+def listen_for_stop(source):
+    global stop_speaking, is_speaking
+
+    stop_recognizer = sr.Recognizer()
+    stop_recognizer.pause_threshold = 0.5
+    stop_recognizer.energy_threshold = 400
+
+    print("[Stop listener active]")
+
+    while is_speaking and not stop_speaking:
+        try:
+            audio = stop_recognizer.listen(source, timeout=0.3, phrase_time_limit=2)
+            command = stop_recognizer.recognize_google(audio, language='en-IN').lower()
+            if any(word in command for word in ["stop", "chitti stop", "city stop", "quiet", "silence", "shut up"]):
+                force_stop_speaking()
+                break
+        except Exception:
+            continue
 
 # ==========================
 # OPENAI CLOUD MODE
@@ -98,7 +182,6 @@ openai.api_key = "YOUR_API_KEY_HERE"
 
 def ask_openai(prompt):
     try:
-        print(f"Connecting to OpenAI: {prompt}")
         response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -118,8 +201,8 @@ def ask_openai(prompt):
 def main():
     speak("Hello, I am ready. Say Chitti for college info, or Hey Chitti for general questions.")
 
-    LOCAL_WAKE_WORDS = ["chitti", "city", "chiti", "chithi", "chetty", "chilly", "giti", "shitti"]
-    OPENAI_WAKE_WORDS = ["hey chitti", "hey city", "hi chitti", "hi city", "hey chetty"]
+    LOCAL_WAKE_WORDS = ["chitti", "city", "chiti", "chithi", "chetty", "chilly", "giti", "shitti", "chinti", "chinki", "shakti", "shanti", "pretty"]
+    OPENAI_WAKE_WORDS = ["hey chitti", "hey city", "hi chitti", "hi city", "hey chetty", "hey chinti", "hey shanti"]
 
     try:
         with sr.Microphone() as source:
@@ -130,6 +213,11 @@ def main():
             listening = True
             while listening:
                 command = listen_for_command(source)
+
+                if command and is_speaking:
+                    if any(w in command for w in ["chitti stop", "city stop", "stop", "quiet", "silence", "shut up"]):
+                        force_stop_speaking()
+                        continue
 
                 if command:
                     target_mode = None
@@ -153,7 +241,7 @@ def main():
                             speak("Yes?")
                             continue
 
-                        if "exit" in query or "quit" in query or "stop" in query:
+                        if any(w in query for w in ["exit", "quit", "bye"]):
                             speak("Goodbye!")
                             listening = False
                             break
@@ -161,12 +249,12 @@ def main():
                         if target_mode == "cloud":
                             print(f"Mode: CLOUD | Query: {query}")
                             response = ask_openai(query)
-                            speak(response)
+                            threading.Thread(target=speak, args=(response, source), daemon=True).start()
                         else:
                             print(f"Mode: LOCAL | Query: {query}")
                             try:
                                 response_text = respond(query, [])
-                                speak(response_text)
+                                threading.Thread(target=speak, args=(response_text, source), daemon=True).start()
                             except Exception as e:
                                 print(f"Processing Error: {e}")
                                 speak("Local processing error.")
@@ -175,6 +263,10 @@ def main():
 
     except KeyboardInterrupt:
         print("\nStopping...")
+    finally:
+        GPIO.output(RED_LED, GPIO.LOW)
+        GPIO.output(GREEN_LED, GPIO.LOW)
+        GPIO.cleanup()
 
 if __name__ == "__main__":
     main()
