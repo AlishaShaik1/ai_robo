@@ -49,6 +49,17 @@ try:
     print("Loading Admission Model...")
     # Loads the full pipeline (ColumnTransformer + LogReg)
     admission_model = joblib.load(ADMISSION_MODEL_PATH)
+    
+    # Check if we loaded a legacy/wrong format (dict instead of pipeline)
+    if isinstance(admission_model, dict):
+        print("Detected legacy admission model format. Re-training for compatibility...")
+        try:
+            train_admission.train_and_save()
+            admission_model = joblib.load(ADMISSION_MODEL_PATH)
+            print("Admission model re-trained and re-loaded successfully.")
+        except Exception as te:
+            print(f"Failed to auto-fix admission model: {te}")
+            admission_model = None
 except Exception as e:
     print(f"Failed to load admission model: {e}")
     admission_model = None
