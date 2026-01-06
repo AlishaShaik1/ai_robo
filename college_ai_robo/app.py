@@ -429,28 +429,6 @@ def respond(message, history=None):
         if found_target:
              answer = kb.search(found_target)
              if answer:
-                 # Auto-append placements
-                 p_branch = found_target  # reasonable placeholder for matching
-                 if "AIML" in found_target: p_branch = "aiml"
-                 elif "Data Science" in found_target: p_branch = "ds"
-                 elif "Cyber" in found_target: p_branch = "cyber"
-                 elif "Artificial Intelligence" in found_target: p_branch = "ai"
-                 elif "IT" in found_target: p_branch = "it"
-                 elif "ECE" in found_target: p_branch = "ece"
-                 elif "EEE" in found_target: p_branch = "eee"
-                 elif "ME" in found_target: p_branch = "mech"
-                 elif "CE" in found_target: p_branch = "civil"
-                 elif "CSE" in found_target: p_branch = "cse"
-                 
-                 try:
-                    stats = get_placement_info(f"placements of {p_branch}")
-                    if "unavailable" not in stats.lower() and "no placement records" not in stats.lower():
-                         answer += f"\n\n**Placement Highlights for {p_branch.upper()}**:\n"
-                         lines = stats.split('\n')
-                         relevant_lines = [l for l in lines if any(k in l for k in ["Highest", "Average", "Total", "Recruiters"])]
-                         answer += "\n".join(relevant_lines)
-                 except: pass
-                 
                  return answer
 
     # Typo tolerance for branches query
@@ -476,46 +454,6 @@ def respond(message, history=None):
     elif intent == "COLLEGE_INFO":
         answer = kb.search(message)
         if answer: 
-            # DYNAMIC PLACEMENT STATS INJECTION
-            # If the user asks about a branch, we should also show placement stats as requested.
-            # Check if answer contains branch keywords
-            branch_map = {
-                "AIML": "aiml", "CSE": "cse", "IT": "it", "ECE": "ece", 
-                "EEE": "eee", "ME": "mech", "CE": "civil", "Data Science": "ds", 
-                "Cyber Security": "cyber", "Artificial Intelligence": "ai"
-            }
-            
-            detected_branch = None
-            # Sort keys by length descending to match specific branches first (e.g. 'Cyber Security' before 'CSE')
-            sorted_keys = sorted(branch_map.keys(), key=len, reverse=True)
-            
-            for key in sorted_keys:
-                # FIX: Check message for branch, not just the KB answer
-                if key in answer or key.lower() in msg_lower: 
-                     detected_branch = branch_map[key]
-                     break
-            
-            # Additional check: only inject if a specific branch keyword was in the original message
-            # This prevents injecting AI stats when user just asks for "available branches"
-            message_has_branch = False
-            for b_key in branch_map.values():
-                if b_key in msg_lower or any(k.lower() in msg_lower for k, v in branch_map.items() if v == b_key):
-                    message_has_branch = True
-                    break
-
-            if detected_branch and message_has_branch:
-                # Fetch placement stats for this branch
-                try:
-                    stats = get_placement_info(f"placements of {detected_branch}")
-                    # Only append if we get valid stats (not "unavailable")
-                    if "unavailable" not in stats.lower() and "no placement records" not in stats.lower():
-                         answer += f"\n\n**Placement Highlights for {detected_branch.upper()}**:\n"
-                         lines = stats.split('\n')
-                         relevant_lines = [l for l in lines if any(k in l for k in ["Highest", "Average", "Total", "Recruiters"])]
-                         answer += "\n".join(relevant_lines)
-                except Exception as e:
-                    print(f"Error fetching dynamic stats: {e}")
-            
             return f"{answer}"
             
         return "I couldn't find specific information in the college handbook."
