@@ -339,7 +339,32 @@ def respond(message, history=None):
     
     if "intake" in msg_lower or "seats" in msg_lower or "capacity" in msg_lower:
         return get_intake_info(message)
+    
+    # NEW: Identity Override
+    if "who are you" in msg_lower or "about yourself" in msg_lower:
+        return "I am Pragati Engineering College AI Robo. I can help you with college details, admissions, placements, and faculty information."
+
+    # NEW: Greetings Overrides
+    if any(w in msg_lower for w in ["hi ", "hi", "hello", "hey", "hai"]):
+        # Check if it's just a greeting or contains more. If just greeting:
+        if len(msg_lower.strip().split()) <= 2:
+             return "Hello! How can I help you today regarding Pragati Engineering College?"
+
+    if any(w in msg_lower for w in ["bye", "goodbye", "exit", "quit"]):
+         return "Goodbye! Have a great day!"
+
+    # History of AIML -> HOD AIML Override
+    if "history of aiml" in msg_lower:
+        return get_people_info("hod of aiml")
         
+    # NEW: Faculty Role Override (Prioritize over KB)
+    if any(w in msg_lower for w in ["hod", "principal", "dean", "chairman", "director", "coordinator", "incharge"]):
+         return get_people_info(message)
+
+    # NEW: Placement Priority Routing
+    if "placement" in msg_lower:
+         return get_placement_info(message)
+
     # Admission Process Override (Fix for intent misclassification)
     # Force search for "Admissions Process" to get the right KB chunk
     if ("admission" in msg_lower and ("process" in msg_lower or "procedure" in msg_lower)) or "how to join" in msg_lower or "eligibility" in msg_lower:
@@ -363,7 +388,11 @@ def respond(message, history=None):
     # Detects branch keywords and searches specifically for that branch description
     branch_lookup = {
         "aiml": "B.Tech AIML",
-        "human": "B.Tech AIML", # Context aware if needed
+        "aim": "B.Tech AIML",
+        "ami": "B.Tech AIML",  # Speech recognition often misses the 'l'
+        "human": "B.Tech AIML",
+        "cse(aiml)": "B.Tech AIML", # Context aware if needed
+        "cse(ai&ml)":"B.Tech AIML",
         "artificial intelligence": "B.Tech CSE (Artificial Intelligence)",
         "ai": "B.Tech CSE (Artificial Intelligence)",
         "cyber": "B.Tech CSE (Cyber Security)",
@@ -461,11 +490,20 @@ def respond(message, history=None):
             sorted_keys = sorted(branch_map.keys(), key=len, reverse=True)
             
             for key in sorted_keys:
-                if key in answer: # Answer mentions the branch name (e.g. "B.Tech AIML")
+                # FIX: Check message for branch, not just the KB answer
+                if key in answer or key.lower() in msg_lower: 
                      detected_branch = branch_map[key]
                      break
             
-            if detected_branch:
+            # Additional check: only inject if a specific branch keyword was in the original message
+            # This prevents injecting AI stats when user just asks for "available branches"
+            message_has_branch = False
+            for b_key in branch_map.values():
+                if b_key in msg_lower or any(k.lower() in msg_lower for k, v in branch_map.items() if v == b_key):
+                    message_has_branch = True
+                    break
+
+            if detected_branch and message_has_branch:
                 # Fetch placement stats for this branch
                 try:
                     stats = get_placement_info(f"placements of {detected_branch}")
